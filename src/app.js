@@ -1,7 +1,7 @@
 import express, { json } from "express";
 import dotenv from "dotenv";
 import { pool } from "./db.js";
-import { validateId, validateProductBody } from "./middlewares/validators.js";
+import { validateId, validateProductBody,validatePaginationAndFilters } from "./middlewares/validators.js";
 import { asyncHandler } from "./utils/asyncHandler.js";
 
 
@@ -16,11 +16,41 @@ app.get("/health", asyncHandler(async (req, res, next) => {
 
  }));
 // Ruta para obtener todos los productos
-app.get("/api/products", asyncHandler(async (req, res, next) => {
-  const [rows] = await pool.query(
-    "SELECT id,name,price, created_at FROM product ORDER BY id DESC"
+//  paginación y filtros
+app.get("/api/products", validatePaginationAndFilters, asyncHandler(async (req, res) => {
+  const { limit, offset, q, minPrice, maxPrice, page } = req.filters;
+
+  const where = [];
+  const params = [];
+
+  if (q) { where.push("name LIKE ?"); params.push(`%${q}%`); }
+  if (minPrice !== undefined) { where.push("price >= ?"); params.push(minPrice); }
+  if (maxPrice !== undefined) { where.push("price <= ?"); params.push(maxPrice); }
+
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+
+  // total para paginación
+  const [countRows] = await pool.query(
+    `SELECT COUNT(*) AS total FROM product ${whereSql}`, params
   );
-  res.json(rows);
+  const total = countRows[0].total;
+
+  // items
+  const [rows] = await pool.query(
+    `SELECT id,name,price,created_at
+     FROM product ${whereSql}
+     ORDER BY id DESC
+     LIMIT ? OFFSET ?`,
+    [...params, limit, offset]
+  );
+
+  res.json({
+    page,
+    limit,
+    total,
+    totalPages: Math.ceil(total / limit),
+    items: rows,
+  });
 }));
 // Ruta para crear un nuevo producto
 app.post("/api/products", validateProductBody, asyncHandler(async (req, res, next) => {
